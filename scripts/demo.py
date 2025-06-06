@@ -10,13 +10,23 @@ from pathlib import Path
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
-from indexer.collector.filesystem import FileSystemCollector
-from indexer.collector.s3 import S3Collector
-from indexer.collector.composite import CompositeCollector
-from indexer.parser.tfstate import TfStateParser
-from indexer.es import ElasticsearchSink
-from indexer.queue.memory import MemoryQueue
-from indexer.pipeline import CollectorWorker, ParserWorker, UploaderWorker
+try:
+    from indexer.collector.filesystem import FileSystemCollector
+    from indexer.collector.s3 import S3Collector
+    from indexer.collector.composite import CompositeCollector
+    from indexer.parser.tfstate import TfStateParser
+    from indexer.queue.memory import MemoryQueue
+    from indexer.pipeline import CollectorWorker, ParserWorker, UploaderWorker
+except ImportError as e:
+    print(f"Failed to import required modules: {e}")
+    sys.exit(1)
+
+# Try to import ES, but it's optional for demo
+try:
+    from indexer.es import ElasticsearchSink
+except ImportError:
+    print("Elasticsearch module not available - demo will run without ES upload")
+    ElasticsearchSink = None
 
 
 async def run_demo():
@@ -67,29 +77,45 @@ async def run_demo():
     print("3. Setting up parser and uploader...")
     parser = TfStateParser()
     
-    es_sink = ElasticsearchSink(
-        hosts="http://localhost:9200",
-        index_name="terraform-resources-demo",
-        batch_size=10,
-        batch_timeout=5,
-    )
+    # Try to initialize ES sink, but don't fail if ES is not available
+    es_sink = None
+    if ElasticsearchSink:
+        try:
+            es_sink = ElasticsearchSink(
+                hosts="http://localhost:9200",
+                index_name="terraform-resources-demo",
+                batch_size=10,
+                batch_timeout=5,
+            )
+            print("   - Elasticsearch sink configured")
+        except Exception as e:
+            print(f"   - Elasticsearch sink failed to configure: {e}")
+            print("   - Continuing without Elasticsearch (demo mode)")
     
     # Initialize workers
     print("4. Starting pipeline workers...")
     collector_worker = CollectorWorker(composite_collector, collector_queue)
     parser_worker = ParserWorker(collector_queue, parser_queue, parser)
-    uploader_worker = UploaderWorker(parser_queue, es_sink)
+    
+    # Only create uploader worker if ES is available
+    uploader_worker = None
+    if es_sink:
+        uploader_worker = UploaderWorker(parser_queue, es_sink)
     
     try:
         # Start workers
         await collector_worker.start()
         await parser_worker.start()
-        await uploader_worker.start()
+        if uploader_worker:
+            await uploader_worker.start()
         
         print("5. Pipeline started! Processing files...")
         print("   - Collecting from filesystem and S3")
         print("   - Parsing terraform state files")
-        print("   - Uploading to Elasticsearch")
+        if uploader_worker:
+            print("   - Uploading to Elasticsearch")
+        else:
+            print("   - Parsing only (Elasticsearch not available)")
         print("\nPress Ctrl+C to stop the demo\n")
         
         # Monitor queues
@@ -114,7 +140,8 @@ async def run_demo():
     finally:
         # Clean up
         print("6. Cleaning up...")
-        await uploader_worker.stop()
+        if uploader_worker:
+            await uploader_worker.stop()
         await parser_worker.stop()
         await collector_worker.stop()
         

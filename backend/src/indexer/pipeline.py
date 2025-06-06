@@ -1,12 +1,14 @@
 """Pipeline components for queue-based architecture."""
 
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 
 from .queue.base import BaseQueue
 from .collector.base import BaseCollector
 from .parser.tfstate import TfStateParser
-from .es import ElasticsearchSink
+
+if TYPE_CHECKING:
+    from .es import ElasticsearchSink
 
 
 class CollectorWorker:
@@ -105,7 +107,7 @@ class ParserWorker:
 class UploaderWorker:
     """Worker that reads from input queue and uploads to Elasticsearch."""
     
-    def __init__(self, input_queue: BaseQueue, uploader: ElasticsearchSink):
+    def __init__(self, input_queue: BaseQueue, uploader):
         self.input_queue = input_queue
         self.uploader = uploader
         self._running = False

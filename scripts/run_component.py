@@ -9,16 +9,12 @@ from pathlib import Path
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
-from indexer.collector.filesystem import FileSystemCollector
-from indexer.collector.s3 import S3Collector
-from indexer.parser.tfstate import TfStateParser
-from indexer.es import ElasticsearchSink
-from indexer.queue.memory import MemoryQueue
-
 
 async def run_filesystem_collector():
     """Test the filesystem collector."""
     print("Testing filesystem collector...")
+    
+    from indexer.collector.filesystem import FileSystemCollector
     
     collector = FileSystemCollector(
         watch_directory="./tfstates",
@@ -44,6 +40,12 @@ async def run_s3_collector():
     """Test the S3 collector with localstack."""
     print("Testing S3 collector with localstack...")
     
+    try:
+        from indexer.collector.s3 import S3Collector
+    except ImportError as e:
+        print(f"Cannot test S3 collector - missing dependencies: {e}")
+        return
+    
     collector = S3Collector(
         bucket_name="terraform-states",
         prefix="terraform/",
@@ -53,7 +55,11 @@ async def run_s3_collector():
         endpoint_url="http://localhost:4566",
     )
     
-    await collector.start()
+    try:
+        await collector.start()
+    except Exception as e:
+        print(f"Failed to start S3 collector (is localstack running?): {e}")
+        return
     
     try:
         count = 0
@@ -71,6 +77,8 @@ async def run_s3_collector():
 async def run_parser_test():
     """Test the parser."""
     print("Testing parser...")
+    
+    from indexer.parser.tfstate import TfStateParser
     
     parser = TfStateParser()
     
@@ -98,6 +106,8 @@ async def run_parser_test():
 async def run_queue_test():
     """Test the queue."""
     print("Testing memory queue...")
+    
+    from indexer.queue.memory import MemoryQueue
     
     queue = MemoryQueue(maxsize=10)
     await queue.start()

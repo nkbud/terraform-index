@@ -359,31 +359,46 @@ isort src/ tests/
 
 # Type checking
 mypy src/
+
+# Run simple tests
+python ../scripts/test_components.py
 ```
 
-### Local Development
+### Switching Between Local and Cloud Modes
 
+**Local Mode (.env):**
 ```bash
-# Start just the infrastructure
-docker compose up opensearch opensearch-dashboards localstack
+MODE=local
+FILESYSTEM_ENABLED=true
+S3_ENDPOINT_URL=http://localhost:4566
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+```
 
-# Run the backend locally
-cd backend
-pip install -e .[dev]
-export S3_ENDPOINT_URL=http://localhost:4566
-export AWS_ACCESS_KEY_ID=test
-export AWS_SECRET_ACCESS_KEY=test
-uvicorn indexer.main:app --reload
+**Cloud Mode (.env.cloud):**
+```bash
+MODE=cloud
+FILESYSTEM_ENABLED=false
+# S3_ENDPOINT_URL=  # Empty for real AWS
+AWS_ACCESS_KEY_ID=your-real-access-key
+AWS_SECRET_ACCESS_KEY=your-real-secret-key
 ```
 
 ## API Endpoints
 
-- `GET /` - Health check
-- `GET /stats` - Indexing statistics
+- `GET /` - Health check (shows current mode)
+- `GET /stats` - Pipeline statistics including queue sizes and ES status
 - `POST /search` - Search terraform resources (Elasticsearch query DSL)
 
-Example search:
+Example API usage:
 ```bash
+# Health check
+curl http://localhost:8000/
+
+# Pipeline statistics  
+curl http://localhost:8000/stats
+
+# Search for production EC2 instances
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
   -d '{
@@ -397,6 +412,71 @@ curl -X POST http://localhost:8000/search \
     }
   }'
 ```
+
+## Scripts and Utilities
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/seed_s3.py` | Upload sample .tfstate files to Localstack S3 |
+| `scripts/run_component.py` | Test individual pipeline components |
+| `scripts/simple_demo.py` | Filesystem-only pipeline demo |
+| `scripts/demo.py` | Full end-to-end pipeline demo |
+| `scripts/test_components.py` | Run basic component tests |
+
+## Extensibility
+
+### Adding New Collectors
+
+1. Inherit from `BaseCollector`
+2. Implement `collect()`, `start()`, and `stop()` methods
+3. Add to `CompositeCollector` in main.py
+
+Example:
+```python
+class GitCollector(BaseCollector):
+    async def collect(self) -> AsyncIterator[Dict[str, Any]]:
+        # Implement Git repository scanning
+        pass
+```
+
+### Adding New Queue Types
+
+1. Inherit from `BaseQueue`  
+2. Implement required methods
+3. Designed for easy SQS integration:
+
+```python
+class SQSQueue(BaseQueue):
+    def __init__(self, queue_url: str):
+        self.sqs = boto3.client('sqs')
+        self.queue_url = queue_url
+    
+    async def put(self, item: Dict[str, Any]) -> None:
+        # Send to SQS
+        pass
+```
+
+## Monitoring
+
+- **Queue Sizes**: Monitor via `/stats` endpoint
+- **Processing Rate**: Track documents per second
+- **Error Handling**: All workers continue on individual file errors
+- **Resource Usage**: Each stage runs independently for scalability
+
+## Architecture Benefits
+
+1. **Decoupled Processing**: Each stage (collect → parse → upload) runs independently
+2. **Scalability**: Easy to scale individual components or add more workers
+3. **Reliability**: Queues provide buffering during load spikes or temporary failures
+4. **Testability**: Individual components can be tested and run separately
+5. **Flexibility**: Support multiple input sources and easy to add new ones
+
+## Performance Tuning
+
+- **Queue Size**: Adjust `QUEUE_MAX_SIZE` based on memory constraints
+- **Poll Intervals**: Tune collector poll intervals for your data freshness needs
+- **ES Batch Size**: Optimize `ES_BATCH_SIZE` for your Elasticsearch cluster
+- **Concurrent Workers**: Multiple parser/uploader workers can be added for higher throughput
 
 ## Extensibility
 
@@ -421,29 +501,31 @@ class MyCollector(BaseCollector):
         pass
 ```
 
-### Custom Transformers
-
-The parsing pipeline can be extended by modifying `TfStateParser` or implementing additional processing steps.
-
-## Monitoring
-
-- View indexing progress in container logs: `docker compose logs -f terraform-indexer`
-- Check Elasticsearch health: http://localhost:9200/_cluster/health
-- Monitor indexing stats: http://localhost:8000/stats
-
 ## Troubleshooting
 
-**No documents appearing in OpenSearch:**
-- Check that tfstate files are being uploaded to the correct S3 bucket/prefix
-- Verify container logs for parsing errors
-- Ensure Elasticsearch is healthy
+**No documents being processed:**
+- Check pipeline status: `curl http://localhost:8000/stats`
+- Verify .tfstate files exist in `./tfstates/` directory
+- Check container logs: `docker compose logs -f terraform-indexer`
+- Ensure Elasticsearch is healthy: `curl http://localhost:9200/_cluster/health`
 
 **Connection errors:**
 - Verify all services are running: `docker compose ps`
 - Check service logs: `docker compose logs [service-name]`
-- Ensure ports are not conflicting with other services
+- For S3 issues, ensure Localstack is running: `curl http://localhost:4566/health`
 
 **Performance issues:**
-- Adjust `ES_BATCH_SIZE` and `ES_BATCH_TIMEOUT` for your workload
-- Increase `S3_POLL_INTERVAL` if processing large state files
-- Scale Elasticsearch resources if needed
+- Monitor queue sizes via `/stats` endpoint
+- Adjust `QUEUE_MAX_SIZE` for memory constraints
+- Tune `ES_BATCH_SIZE` and `ES_BATCH_TIMEOUT` for your Elasticsearch cluster
+- Increase poll intervals if processing very large state files
+
+**Local development issues:**
+- Ensure correct Python path: `export PYTHONPATH=./backend/src:$PYTHONPATH`
+- Test individual components: `python scripts/run_component.py queue`
+- Run filesystem-only demo: `python scripts/simple_demo.py`
+
+**Mode switching problems:**
+- Verify `.env` file configuration matches desired mode
+- Check that `FILESYSTEM_ENABLED` is set correctly for your mode
+- Ensure AWS credentials are properly configured for cloud mode

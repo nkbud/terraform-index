@@ -41,7 +41,7 @@ class S3Collector(BaseCollector):
         try:
             # Test S3 connection
             await asyncio.get_event_loop().run_in_executor(
-                None, self.s3_client.head_bucket, Bucket=self.bucket_name
+                None, lambda: self.s3_client.head_bucket(Bucket=self.bucket_name)
             )
         except (ClientError, NoCredentialsError) as e:
             raise ConnectionError(f"Failed to connect to S3 bucket {self.bucket_name}: {e}")
