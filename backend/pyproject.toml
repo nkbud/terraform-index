@@ -36,6 +36,9 @@ target-version = ['py311']
 [tool.isort]
 profile = "black"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
