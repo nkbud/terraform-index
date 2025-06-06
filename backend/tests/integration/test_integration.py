@@ -92,8 +92,7 @@ class TestS3Integration:
         
         # Create collector
         collector = S3Collector(
-            bucket_name=bucket_name,
-            prefix="environments/",
+            bucket_names=bucket_name,
             poll_interval=1,
             aws_access_key_id="testing",
             aws_secret_access_key="testing",
@@ -186,8 +185,7 @@ class TestS3Integration:
         )
         
         collector = S3Collector(
-            bucket_name=bucket_name,
-            prefix="environments/",
+            bucket_names=bucket_name,
             poll_interval=1,
             aws_access_key_id="testing",
             aws_secret_access_key="testing",

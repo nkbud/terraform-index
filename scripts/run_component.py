@@ -47,8 +47,7 @@ async def run_s3_collector():
         return
     
     collector = S3Collector(
-        bucket_name="terraform-states",
-        prefix="terraform/",
+        bucket_names="terraform-states",
         poll_interval=5,
         aws_access_key_id="test",
         aws_secret_access_key="test",

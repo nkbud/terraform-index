@@ -24,8 +24,7 @@ class Settings(BaseSettings):
     mode: str = "local"  # "local" or "cloud"
     
     # S3 Configuration
-    s3_bucket: str = "terraform-states"
-    s3_prefix: str = ""
+    s3_buckets: str = "terraform-states"  # comma-separated list
     s3_poll_interval: int = 30
     s3_endpoint_url: str = None
     aws_access_key_id: str = None
@@ -42,8 +41,8 @@ class Settings(BaseSettings):
     es_batch_size: int = 100
     es_batch_timeout: int = 10
     
-    # Queue Configuration
-    queue_max_size: int = 1000
+    # Queue Configuration (removed max size)
+    # Queues are now unlimited by default
 
     class Config:
         env_file = ".env"
@@ -65,9 +64,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     
     print(f"Starting terraform indexer in {settings.mode} mode...")
     
-    # Initialize queues
-    collector_queue = MemoryQueue(maxsize=settings.queue_max_size)
-    parser_queue = MemoryQueue(maxsize=settings.queue_max_size)
+    # Initialize queues (unlimited size)
+    collector_queue = MemoryQueue()
+    parser_queue = MemoryQueue()
     
     await collector_queue.start()
     await parser_queue.start()
@@ -86,8 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         
         # Add S3 collector for localstack
         s3_collector = S3Collector(
-            bucket_name=settings.s3_bucket,
-            prefix=settings.s3_prefix,
+            bucket_names=settings.s3_buckets,
             poll_interval=settings.s3_poll_interval,
             aws_access_key_id=settings.aws_access_key_id or "test",
             aws_secret_access_key=settings.aws_secret_access_key or "test",
@@ -98,8 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         # Cloud mode: use real S3
         s3_collector = S3Collector(
-            bucket_name=settings.s3_bucket,
-            prefix=settings.s3_prefix,
+            bucket_names=settings.s3_buckets,
             poll_interval=settings.s3_poll_interval,
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
@@ -177,8 +174,7 @@ async def get_stats():
         "mode": settings.mode,
         "queues": {},
         "collector": {
-            "bucket": settings.s3_bucket,
-            "prefix": settings.s3_prefix,
+            "buckets": settings.s3_buckets,
             "poll_interval": settings.s3_poll_interval,
         }
     }

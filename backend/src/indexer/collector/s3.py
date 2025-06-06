@@ -15,15 +15,18 @@ class S3Collector(BaseCollector):
 
     def __init__(
         self,
-        bucket_name: str,
-        prefix: str = "",
+        bucket_names: str,  # Can be single bucket or comma-separated list
         poll_interval: int = 30,
         aws_access_key_id: str = None,
         aws_secret_access_key: str = None,
         endpoint_url: str = None,
     ):
-        self.bucket_name = bucket_name
-        self.prefix = prefix
+        # Parse bucket names - can be comma-separated
+        if isinstance(bucket_names, str):
+            self.bucket_names = [name.strip() for name in bucket_names.split(',') if name.strip()]
+        else:
+            self.bucket_names = bucket_names
+            
         self.poll_interval = poll_interval
         self.seen_objects: Set[str] = set()
         self._running = False
@@ -38,13 +41,14 @@ class S3Collector(BaseCollector):
     async def start(self) -> None:
         """Initialize the collector."""
         self._running = True
-        try:
-            # Test S3 connection
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.s3_client.head_bucket(Bucket=self.bucket_name)
-            )
-        except (ClientError, NoCredentialsError) as e:
-            raise ConnectionError(f"Failed to connect to S3 bucket {self.bucket_name}: {e}")
+        # Test S3 connection for all buckets
+        for bucket_name in self.bucket_names:
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda b=bucket_name: self.s3_client.head_bucket(Bucket=b)
+                )
+            except (ClientError, NoCredentialsError) as e:
+                raise ConnectionError(f"Failed to connect to S3 bucket {bucket_name}: {e}")
 
     async def stop(self) -> None:
         """Clean up the collector."""
@@ -52,55 +56,56 @@ class S3Collector(BaseCollector):
 
     async def collect(self) -> AsyncIterator[Dict[str, Any]]:
         """
-        Poll S3 bucket for .tfstate files.
+        Poll S3 buckets for .tfstate files.
         
         Yields:
             Dict with 'content' (parsed tfstate JSON) and 'metadata'
         """
         while self._running:
             try:
-                # List objects in bucket
-                response = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.s3_client.list_objects_v2(
-                        Bucket=self.bucket_name,
-                        Prefix=self.prefix
+                # Process all buckets
+                for bucket_name in self.bucket_names:
+                    # List objects in bucket (search entire bucket for *.tfstate files)
+                    response = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.s3_client.list_objects_v2(
+                            Bucket=bucket_name
+                        )
                     )
-                )
-                
-                for obj in response.get('Contents', []):
-                    key = obj['Key']
                     
-                    # Only process .tfstate files
-                    if not key.endswith('.tfstate'):
-                        continue
-                    
-                    # Skip if already processed (simple deduplication)
-                    object_id = f"{key}:{obj['LastModified'].isoformat()}"
-                    if object_id in self.seen_objects:
-                        continue
-                    
-                    try:
-                        # Download and parse tfstate file
-                        content = await self._download_object(key)
-                        tfstate_data = json.loads(content)
+                    for obj in response.get('Contents', []):
+                        key = obj['Key']
                         
-                        self.seen_objects.add(object_id)
+                        # Only process .tfstate files
+                        if not key.endswith('.tfstate'):
+                            continue
                         
-                        yield {
-                            'content': tfstate_data,
-                            'metadata': {
-                                'source': 's3',
-                                'bucket': self.bucket_name,
-                                'key': key,
-                                'last_modified': obj['LastModified'].isoformat(),
-                                'size': obj['Size'],
-                                'collected_at': datetime.utcnow().isoformat(),
+                        # Skip if already processed (simple deduplication)
+                        object_id = f"{bucket_name}:{key}:{obj['LastModified'].isoformat()}"
+                        if object_id in self.seen_objects:
+                            continue
+                        
+                        try:
+                            # Download and parse tfstate file
+                            content = await self._download_object(bucket_name, key)
+                            tfstate_data = json.loads(content)
+                            
+                            self.seen_objects.add(object_id)
+                            
+                            yield {
+                                'content': tfstate_data,
+                                'metadata': {
+                                    'source': 's3',
+                                    'bucket': bucket_name,
+                                    'key': key,
+                                    'last_modified': obj['LastModified'].isoformat(),
+                                    'size': obj['Size'],
+                                    'collected_at': datetime.utcnow().isoformat(),
+                                }
                             }
-                        }
-                    except (json.JSONDecodeError, ClientError) as e:
-                        print(f"Error processing {key}: {e}")
-                        continue
+                        except (json.JSONDecodeError, ClientError) as e:
+                            print(f"Error processing {bucket_name}/{key}: {e}")
+                            continue
                 
             except ClientError as e:
                 print(f"Error listing S3 objects: {e}")
@@ -108,10 +113,10 @@ class S3Collector(BaseCollector):
             # Wait before next poll
             await asyncio.sleep(self.poll_interval)
 
-    async def _download_object(self, key: str) -> str:
+    async def _download_object(self, bucket_name: str, key: str) -> str:
         """Download object content from S3."""
         response = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
+            lambda: self.s3_client.get_object(Bucket=bucket_name, Key=key)
         )
         return response['Body'].read().decode('utf-8')
