@@ -64,14 +64,19 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - MODE=local
       - S3_BUCKET=terraform-states
       - S3_ENDPOINT_URL=http://localstack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - ES_HOSTS=http://opensearch:9200
       - ES_INDEX=terraform-resources
+      - FILESYSTEM_WATCH_DIRECTORY=/app/tfstates
+      - FILESYSTEM_ENABLED=true
     volumes:
+      - ./tfstates:/app/tfstates
       - ./examples:/app/examples
+      - ./.env:/app/.env
     depends_on:
       - opensearch
       - localstack

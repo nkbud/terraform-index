@@ -9,12 +9,19 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings
 
 from indexer.collector.s3 import S3Collector
+from indexer.collector.filesystem import FileSystemCollector
+from indexer.collector.composite import CompositeCollector
 from indexer.parser.tfstate import TfStateParser
 from indexer.es import ElasticsearchSink
+from indexer.queue.memory import MemoryQueue
+from indexer.pipeline import CollectorWorker, ParserWorker, UploaderWorker
 
 
 class Settings(BaseSettings):
     """Application settings."""
+    
+    # Mode configuration
+    mode: str = "local"  # "local" or "cloud"
     
     # S3 Configuration
     s3_bucket: str = "terraform-states"
@@ -24,62 +31,89 @@ class Settings(BaseSettings):
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
     
+    # Filesystem Configuration
+    filesystem_watch_directory: str = "./tfstates"
+    filesystem_poll_interval: int = 5
+    filesystem_enabled: bool = True
+    
     # Elasticsearch Configuration
     es_hosts: str = "http://localhost:9200"
     es_index: str = "terraform-resources"
     es_batch_size: int = 100
     es_batch_timeout: int = 10
+    
+    # Queue Configuration
+    queue_max_size: int = 1000
 
     class Config:
         env_file = ".env"
 
 
 # Global components
-collector: S3Collector = None
-parser: TfStateParser = None
-es_sink: ElasticsearchSink = None
-indexing_task: asyncio.Task = None
+collector_queue: MemoryQueue = None
+parser_queue: MemoryQueue = None
+collector_worker: CollectorWorker = None
+parser_worker: ParserWorker = None
+uploader_worker: UploaderWorker = None
 settings = Settings()
-
-
-async def indexing_loop() -> None:
-    """Main indexing loop that processes terraform state files."""
-    global collector, parser, es_sink
-    
-    print("Starting indexing loop...")
-    
-    try:
-        async for state_data in collector.collect():
-            tfstate = state_data['content']
-            metadata = state_data['metadata']
-            
-            print(f"Processing {metadata['key']} from {metadata['bucket']}")
-            
-            # Parse tfstate into individual resource documents
-            for doc in parser.parse(tfstate, metadata):
-                await es_sink.index_document(doc)
-                
-    except Exception as e:
-        print(f"Error in indexing loop: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
-    global collector, parser, es_sink, indexing_task
+    global collector_queue, parser_queue, collector_worker, parser_worker, uploader_worker
     
-    # Initialize components
-    collector = S3Collector(
-        bucket_name=settings.s3_bucket,
-        prefix=settings.s3_prefix,
-        poll_interval=settings.s3_poll_interval,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        endpoint_url=settings.s3_endpoint_url,
-    )
+    print(f"Starting terraform indexer in {settings.mode} mode...")
     
+    # Initialize queues
+    collector_queue = MemoryQueue(maxsize=settings.queue_max_size)
+    parser_queue = MemoryQueue(maxsize=settings.queue_max_size)
+    
+    await collector_queue.start()
+    await parser_queue.start()
+    
+    # Initialize collectors based on mode
+    collectors = []
+    
+    if settings.mode == "local":
+        # Local mode: use both filesystem and localstack S3
+        if settings.filesystem_enabled:
+            filesystem_collector = FileSystemCollector(
+                watch_directory=settings.filesystem_watch_directory,
+                poll_interval=settings.filesystem_poll_interval,
+            )
+            collectors.append(filesystem_collector)
+        
+        # Add S3 collector for localstack
+        s3_collector = S3Collector(
+            bucket_name=settings.s3_bucket,
+            prefix=settings.s3_prefix,
+            poll_interval=settings.s3_poll_interval,
+            aws_access_key_id=settings.aws_access_key_id or "test",
+            aws_secret_access_key=settings.aws_secret_access_key or "test",
+            endpoint_url=settings.s3_endpoint_url or "http://localhost:4566",
+        )
+        collectors.append(s3_collector)
+        
+    else:
+        # Cloud mode: use real S3
+        s3_collector = S3Collector(
+            bucket_name=settings.s3_bucket,
+            prefix=settings.s3_prefix,
+            poll_interval=settings.s3_poll_interval,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+            endpoint_url=settings.s3_endpoint_url,
+        )
+        collectors.append(s3_collector)
+    
+    # Create composite collector
+    composite_collector = CompositeCollector(collectors)
+    
+    # Initialize parser
     parser = TfStateParser()
     
+    # Initialize Elasticsearch sink
     es_sink = ElasticsearchSink(
         hosts=settings.es_hosts,
         index_name=settings.es_index,
@@ -87,29 +121,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         batch_timeout=settings.es_batch_timeout,
     )
     
-    # Start services
-    await collector.start()
-    await es_sink.start()
+    # Initialize workers
+    collector_worker = CollectorWorker(composite_collector, collector_queue)
+    parser_worker = ParserWorker(collector_queue, parser_queue, parser)
+    uploader_worker = UploaderWorker(parser_queue, es_sink)
     
-    # Start background indexing task
-    indexing_task = asyncio.create_task(indexing_loop())
+    # Start workers
+    await collector_worker.start()
+    await parser_worker.start()
+    await uploader_worker.start()
     
-    print("Terraform indexer started")
+    print("Terraform indexer started successfully")
     
     yield
     
     # Cleanup
     print("Shutting down terraform indexer...")
     
-    if indexing_task:
-        indexing_task.cancel()
-        try:
-            await indexing_task
-        except asyncio.CancelledError:
-            pass
+    if uploader_worker:
+        await uploader_worker.stop()
+    if parser_worker:
+        await parser_worker.stop()
+    if collector_worker:
+        await collector_worker.stop()
     
-    await collector.stop()
-    await es_sink.stop()
+    if parser_queue:
+        await parser_queue.stop()
+    if collector_queue:
+        await collector_queue.stop()
+    
+    print("Terraform indexer shut down complete")
 
 
 # Create FastAPI app
@@ -124,34 +165,47 @@ app = FastAPI(
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "ok", "service": "terraform-indexer"}
+    return {"status": "ok", "service": "terraform-indexer", "mode": settings.mode}
 
 
 @app.get("/stats")
 async def get_stats():
     """Get indexing statistics."""
-    if es_sink:
+    global collector_queue, parser_queue, uploader_worker
+    
+    stats = {
+        "mode": settings.mode,
+        "queues": {},
+        "collector": {
+            "bucket": settings.s3_bucket,
+            "prefix": settings.s3_prefix,
+            "poll_interval": settings.s3_poll_interval,
+        }
+    }
+    
+    if collector_queue:
+        stats["queues"]["collector_queue_size"] = await collector_queue.qsize()
+    if parser_queue:
+        stats["queues"]["parser_queue_size"] = await parser_queue.qsize()
+    
+    if uploader_worker and uploader_worker.uploader:
         try:
-            stats = await es_sink.get_stats()
-            return {
-                "elasticsearch": stats,
-                "collector": {
-                    "bucket": settings.s3_bucket,
-                    "prefix": settings.s3_prefix,
-                    "poll_interval": settings.s3_poll_interval,
-                }
-            }
+            es_stats = await uploader_worker.uploader.get_stats()
+            stats["elasticsearch"] = es_stats
         except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Service not initialized"}
+            stats["elasticsearch_error"] = str(e)
+    
+    return stats
 
 
 @app.post("/search")
 async def search_resources(query: dict):
     """Search terraform resources."""
-    if es_sink:
+    global uploader_worker
+    
+    if uploader_worker and uploader_worker.uploader:
         try:
-            return await es_sink.search(query)
+            return await uploader_worker.uploader.search(query)
         except Exception as e:
             return {"error": str(e)}
     return {"error": "Service not initialized"}
