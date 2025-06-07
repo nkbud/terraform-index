@@ -8,24 +8,27 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from .base import BaseCollector
+from ..logging import LoggingMixin
 
 
-class S3Collector(BaseCollector):
+class S3Collector(BaseCollector, LoggingMixin):
     """Collects terraform state files from S3 buckets."""
 
     def __init__(
         self,
-        bucket_names: str,  # Can be single bucket or comma-separated list
+        bucket_names,  # Can be list or string (comma-separated)
         poll_interval: int = 30,
         aws_access_key_id: str = None,
         aws_secret_access_key: str = None,
         endpoint_url: str = None,
     ):
-        # Parse bucket names - can be comma-separated
+        # Parse bucket names - handle both list and comma-separated string
         if isinstance(bucket_names, str):
             self.bucket_names = [name.strip() for name in bucket_names.split(',') if name.strip()]
-        else:
+        elif isinstance(bucket_names, list):
             self.bucket_names = bucket_names
+        else:
+            raise ValueError(f"bucket_names must be a string or list, got {type(bucket_names)}")
             
         self.poll_interval = poll_interval
         self.seen_objects: Set[str] = set()
@@ -40,18 +43,24 @@ class S3Collector(BaseCollector):
 
     async def start(self) -> None:
         """Initialize the collector."""
+        self.logger.info(f"☁️ Starting S3 collector (buckets: {self.bucket_names})")
         self._running = True
+        
         # Test S3 connection for all buckets
         for bucket_name in self.bucket_names:
             try:
+                self.logger.debug(f"Testing connection to bucket: {bucket_name}")
                 await asyncio.get_event_loop().run_in_executor(
                     None, lambda b=bucket_name: self.s3_client.head_bucket(Bucket=b)
                 )
+                self.logger.debug(f"✅ Connected to bucket: {bucket_name}")
             except (ClientError, NoCredentialsError) as e:
+                self.logger.error(f"❌ Failed to connect to S3 bucket {bucket_name}: {e}")
                 raise ConnectionError(f"Failed to connect to S3 bucket {bucket_name}: {e}")
 
     async def stop(self) -> None:
         """Clean up the collector."""
+        self.logger.info("🛑 Stopping S3 collector")
         self._running = False
 
     async def collect(self) -> AsyncIterator[Dict[str, Any]]:
@@ -61,10 +70,16 @@ class S3Collector(BaseCollector):
         Yields:
             Dict with 'content' (parsed tfstate JSON) and 'metadata'
         """
+        self.logger.debug(f"Starting S3 collection loop (poll interval: {self.poll_interval}s)")
+        
         while self._running:
             try:
                 # Process all buckets
+                total_objects_found = 0
+                
                 for bucket_name in self.bucket_names:
+                    self.logger.debug(f"Scanning bucket: {bucket_name}")
+                    
                     # List objects in bucket (search entire bucket for *.tfstate files)
                     response = await asyncio.get_event_loop().run_in_executor(
                         None,
@@ -73,6 +88,7 @@ class S3Collector(BaseCollector):
                         )
                     )
                     
+                    objects_in_bucket = 0
                     for obj in response.get('Contents', []):
                         key = obj['Key']
                         
@@ -86,29 +102,46 @@ class S3Collector(BaseCollector):
                             continue
                         
                         try:
+                            self.logger.debug(f"Processing new/updated S3 object: s3://{bucket_name}/{key}")
+                            
                             # Download and parse tfstate file
                             content = await self._download_object(bucket_name, key)
                             tfstate_data = json.loads(content)
                             
                             self.seen_objects.add(object_id)
+                            objects_in_bucket += 1
+                            total_objects_found += 1
+                            
+                            file_size_kb = len(content) / 1024
+                            self.logger.debug(f"Downloaded {file_size_kb:.1f}KB from s3://{bucket_name}/{key}")
                             
                             yield {
                                 'content': tfstate_data,
                                 'metadata': {
-                                    'source': 's3',
+                                    'source': f's3://{bucket_name}/{key}',
+                                    'type': 's3',
                                     'bucket': bucket_name,
                                     'key': key,
                                     'last_modified': obj['LastModified'].isoformat(),
-                                    'size': obj['Size'],
-                                    'collected_at': datetime.utcnow().isoformat(),
+                                    'size_bytes': obj['Size'],
+                                    'collected_at': datetime.now().isoformat(),
                                 }
                             }
                         except (json.JSONDecodeError, ClientError) as e:
-                            print(f"Error processing {bucket_name}/{key}: {e}")
+                            self.logger.error(f"❌ Error processing s3://{bucket_name}/{key}: {e}")
                             continue
+                    
+                    if objects_in_bucket > 0:
+                        self.logger.debug(f"Found {objects_in_bucket} new/updated objects in bucket {bucket_name}")
+                
+                if total_objects_found > 0:
+                    self.logger.info(f"☁️ Processed {total_objects_found} S3 objects")
                 
             except ClientError as e:
-                print(f"Error listing S3 objects: {e}")
+                self.logger.error(f"❌ Error listing S3 objects: {e}")
+            except Exception as e:
+                self.logger.error(f"❌ Unexpected error in S3 collector: {e}")
+                self.logger.exception("Full error details:")
             
             # Wait before next poll
             await asyncio.sleep(self.poll_interval)

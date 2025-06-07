@@ -1,12 +1,184 @@
 # terraform-indexer
 
-A queue-based pipeline that collects Terraform `.tfstate` files from multiple sources (local filesystem and S3), parses them, and indexes them into Elasticsearch for exploration and search.
+A queue-based pipeline that collects Terraform `.tfstate` files from multiple sources (local filesystem, S3, and Kubernetes), parses them, and indexes them into Elasticsearch for powerful exploration and search.
 
-Everything starts with one `docker compose up`.
+**Get a running demo in 30 seconds:**
+```bash
+git clone https://github.com/nkbud/terraform-index.git
+cd terraform-index
+make setup
+```
+🎉 **Done!** Visit http://localhost:3000 to explore your infrastructure.
 
-## Architecture
+## What This Does
 
-The system uses a queue-based architecture with three main stages:
+Transform your scattered Terraform state files into a searchable, explorable infrastructure database:
+
+```
+📁 .tfstate files + ☁️ S3 buckets + ⚓ K8s secrets  →  🔍 Powerful Search UI
+```
+
+**Before:** Terraform state scattered across files, S3 buckets, and Kubernetes secrets  
+**After:** Unified search and exploration of all your infrastructure resources
+
+## Quick Start
+
+### Option 1: Instant Demo (Recommended)
+```bash
+# Complete setup with sample data
+make setup
+
+# View your infrastructure
+open http://localhost:3000
+```
+
+### Option 2: Step-by-Step
+```bash
+# 1. Start the system
+docker compose up --build -d
+
+# 2. Add your .tfstate files
+cp your-terraform.tfstate ./tfstates/
+
+# 3. Explore at http://localhost:3000
+```
+
+## What You Get
+
+### 🔍 **Advanced Search Interface**
+- **Full-text search** across all resource attributes
+- **Multi-field filtering** (type=aws_instance AND region=us-east-1)
+- **Fuzzy matching** for typos and partial matches
+- **Drill-down exploration** - click to find similar resources
+
+### 📊 **Infrastructure Discovery**
+- **Resource relationships** - see how components connect
+- **Source tracking** - know exactly where each resource comes from
+- **Time-based insights** - understand when resources were last updated
+- **Cross-environment visibility** - search across dev, staging, and prod
+
+### 🎯 **Real Use Cases**
+```bash
+# Find all production RDS instances
+Search: "RDS production"
+
+# Multi-key search for security audit
+Key: "type" Value: "aws_security_group"
+Key: "environment" Value: "production"
+
+# Find resources by tag
+Search: "tag:Environment=staging"
+
+# Discover resource relationships
+Click "Similar Type" → See all resources of same type
+Click "Same Region" → See all resources in that region
+```
+
+## Data Sources
+
+### 📁 **Local Filesystem**
+Automatically watches `./tfstates/` directory for `.tfstate` files
+
+### ☁️ **AWS S3**
+- Supports multiple buckets
+- Works with real AWS S3 or Localstack (for local dev)
+- Searches entire buckets for `*.tfstate` files
+
+### ⚓ **Kubernetes Clusters**
+- Finds Terraform state stored as Kubernetes secrets
+- Supports multiple clusters and namespaces
+- Compatible with Terraform's Kubernetes backend
+
+## Configuration
+
+The system has two modes for different environments:
+
+### 🏠 **Local Development** (`.env.local`)
+- Processes files from `./tfstates/` directory
+- Uses Localstack for S3 simulation
+- Debug logging enabled
+- Perfect for testing and development
+
+### ☁️ **Production** (`.env.prod`)
+- Connects to real AWS S3 buckets
+- Monitors production Kubernetes clusters
+- Structured JSON logging
+- Production-ready configuration
+
+Switch between modes:
+```bash
+# Local development
+cp .env.local .env
+make demo-local
+
+# Production  
+cp .env.prod .env
+make demo-prod
+```
+
+## Connecting Your Real Data
+
+### Step 1: Configure S3 Access
+Edit `.env.prod`:
+```bash
+# Your S3 buckets (JSON array)
+S3_BUCKETS=["your-terraform-states", "your-backup-bucket"]
+
+# AWS credentials
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+```
+
+### Step 2: Configure Kubernetes Access
+Edit `.env.prod`:
+```bash
+# Enable Kubernetes collection
+KUBERNETES_ENABLED=true
+
+# Your clusters (JSON array)
+KUBERNETES_CLUSTERS=[
+  {
+    "name": "production",
+    "kubeconfig": "/path/to/prod-kubeconfig",
+    "context": "prod-context",
+    "namespaces": ["terraform", "infrastructure"]
+  },
+  {
+    "name": "staging",
+    "kubeconfig": "/path/to/staging-kubeconfig",
+    "context": "staging-context", 
+    "namespaces": ["default", "terraform"]
+  }
+]
+```
+
+### Step 3: Start with Your Data
+```bash
+# Copy production config
+cp .env.prod .env
+
+# Start the system
+make demo-prod
+
+# Monitor progress
+make logs
+```
+
+## Commands Reference
+
+| Command | Purpose |
+|---------|---------|
+| `make setup` | **Complete setup + demo (recommended first run)** |
+| `make demo-local` | Local development demo |
+| `make demo-prod` | Production demo with real data |
+| `make logs` | View live logs |
+| `make status` | Pipeline status and stats |
+| `make ui` | Open search interface |
+| `make clean` | Reset everything |
+
+## How It Works
+
+The system uses a queue-based architecture with three independent stages:
 
 ```
 ┌─────────────────┐     Queue 1     ┌──────────────┐     Queue 2     ┌────────────────┐
@@ -17,110 +189,142 @@ The system uses a queue-based architecture with three main stages:
 └─────────────────┘                 └──────────────┘                 └────────────────┘
                                                                               │
                                                                        ┌──────▼─────────┐
-                                                                       │ OpenSearch /   │
-                                                                       │ Elasticsearch  │◄──┐
-                                                                       └────────────────┘   │
-                                                                                            │
-                                                                    ┌───────────────────────┐
-                                                                    │   SEARCH UI           │
-                                                                    │ • Exploration         │
-                                                                    │ • Drill-down          │
-                                                                    │ • Multi-key search    │
-                                                                    └───────────────────────┘
+                                                                       │ Search UI      │
+                                                                       │ localhost:3000 │
+                                                                       └────────────────┘
 ```
 
-**Key Features:**
-- **Queue-based processing**: Each stage runs independently with queues between them
-- **Multiple sources**: Watches local filesystem, S3 (real AWS or Localstack), and Kubernetes clusters
-- **Local developer experience**: Full local setup with Docker Compose
-- **Advanced search UI**: Custom exploration interface with drill-down capabilities
-- **Configuration-driven**: Switch between local and cloud modes via `.env` files
+**Benefits:**
+- **Decoupled processing** - each stage runs independently
+- **Fault tolerant** - workers continue on individual file errors  
+- **Scalable** - easy to add more workers or sources
+- **Real-time** - new files are processed automatically
 
-## Quick Start
+## Sample Data
 
-### Option 1: Full Stack (Recommended)
+The system includes sample Terraform state files for immediate testing:
 
-1. **Clone and start everything:**
-   ```bash
-   git clone https://github.com/nkbud/terraform-index.git
-   cd terraform-index
-   docker compose up --build
-   ```
+- **Web Application** - EC2 instances, security groups, load balancers
+- **Database Cluster** - RDS cluster with multiple instances
+- **Network Infrastructure** - VPCs, subnets, route tables
 
-2. **The system automatically processes:**
-   - Sample files in `./tfstates/` directory 
-   - Files uploaded to Localstack S3 bucket
+These files are automatically processed when you run `make setup`.
 
-3. **Explore your infrastructure:**
-   - Custom Search UI: http://localhost:3000
-   - Indexer API: http://localhost:8000
-   - API docs: http://localhost:8000/docs
+## API Endpoints
 
-## Search UI Features
+- **Search UI**: http://localhost:3000
+- **API Health**: http://localhost:8000  
+- **Pipeline Stats**: http://localhost:8000/stats
+- **Search API**: http://localhost:8000/search
+- **API Docs**: http://localhost:8000/docs
 
-The terraform-indexer includes a custom-built search interface designed for infrastructure exploration:
-
-### 🔍 **Advanced Search Capabilities**
-- **Full-text search** across all resource attributes
-- **Multi-field search** - search multiple key-value pairs simultaneously
-- **Fuzzy matching** for typos and partial matches
-- **Real-time results** with instant search feedback
-
-### 📊 **Exploration Experience**
-- **Drill-down navigation** - click to find similar resources by type, region, or source
-- **Faceted browsing** - filter by resource types, sources, or terraform versions
-- **Resource relationships** - discover connections between infrastructure components
-- **Interactive result cards** with detailed resource information
-
-### 🔧 **Developer-Friendly Features**
-- **Multi-key search** - find resources matching multiple criteria simultaneously
-- **Source tracking** - see exactly where each resource comes from (S3, filesystem, K8s)
-- **Time-based exploration** - understand when resources were last updated
-- **Responsive design** - works on desktop and mobile devices
-
-### 🎯 **Use Cases**
+Example API usage:
 ```bash
-# Find all production RDS instances
-Search: "RDS production"
+# Get pipeline statistics
+curl http://localhost:8000/stats | jq
 
-# Multi-key search for specific configurations
-Key: "type" Value: "aws_instance"
-Key: "region" Value: "us-east-1"
-
-# Drill down from a security group to find dependent resources
-Click "Similar Type" → See all security groups
-Click "Same Region" → See all resources in that region
+# Search for AWS instances
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "bool": {
+        "must": [
+          {"term": {"resource_type": "aws_instance"}},
+          {"term": {"attr_tags_Environment": "production"}}
+        ]
+      }
+    }
+  }'
 ```
 
-### Option 2: Local Development Setup
+## Troubleshooting
 
-For development and testing individual components:
+### No documents appearing?
+```bash
+# Check pipeline status
+make status
 
-1. **Start infrastructure only:**
-   ```bash
-   docker compose up opensearch opensearch-dashboards localstack
-   ```
+# View logs
+make logs
 
-2. **Set up Python environment:**
-   ```bash
-   cd backend
-   pip install -e .
-   ```
+# Verify sample data exists
+ls ./tfstates/
+```
 
-3. **Run components individually:**
-   ```bash
-   # Test filesystem collector
-   python scripts/run_component.py filesystem
-   
-   # Test S3 collector  
-   python scripts/run_component.py s3
-   
-   # Test parser
-   python scripts/run_component.py parser
-   
-   # Run end-to-end demo
-   python scripts/demo.py
-   ```
+### Connection errors?
+```bash
+# Check all services are running
+docker compose ps
+
+# Health check
+make health
+
+# Full troubleshooting
+make troubleshoot
+```
+
+### Performance issues?
+```bash
+# Monitor queue sizes
+make stats
+
+# View detailed logs
+LOG_LEVEL=DEBUG make demo-local
+```
+
+## Development
+
+### Setup Development Environment
+```bash
+# Install dependencies
+make dev-setup
+
+# Run tests
+make test
+
+# Format code
+make format
+
+# Run individual components
+docker compose exec terraform-indexer python scripts/run_component.py filesystem
+```
+
+### Architecture
+
+```
+terraform-indexer/
+├─ backend/src/indexer/
+│   ├─ collector/          # Data source collectors
+│   ├─ parser/             # Terraform state parser  
+│   ├─ queue/              # Queue implementations
+│   ├─ pipeline.py         # Worker components
+│   └─ main.py             # FastAPI application
+├─ ui/                     # React search interface
+├─ scripts/                # Demo and testing scripts
+├─ tfstates/               # Sample data
+├─ Makefile                # Quick commands
+└─ docker-compose.yml      # Full stack setup
+```
+
+## Extensibility
+
+### Adding New Data Sources
+```python
+from indexer.collector.base import BaseCollector
+
+class GitCollector(BaseCollector):
+    async def collect(self):
+        # Implement Git repository scanning
+        yield {"content": tfstate_dict, "metadata": source_info}
+```
+
+### Custom Search Features
+The search UI is built with React and can be easily extended with new features, filters, and visualizations.
+
+---
+
+**Questions?** Check the [API docs](http://localhost:8000/docs) or run `make troubleshoot` for diagnostic information.
 
 ## Kubernetes Collector
 
