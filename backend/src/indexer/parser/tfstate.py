@@ -39,9 +39,19 @@ class TfStateParser:
                 attributes = instance.get('attributes', {})
                 
                 # Create flat document for indexing
+                # Handle different source types for ID generation
+                if metadata.get('source') == 'filesystem':
+                    source_id = metadata.get('path', 'unknown')
+                    doc_id = f"{source_id}/{resource_type}.{resource_name}.{idx}"
+                else:
+                    # S3 source
+                    bucket = metadata.get('bucket', 'unknown')
+                    key = metadata.get('key', 'unknown')
+                    doc_id = f"{bucket}/{key}/{resource_type}.{resource_name}.{idx}"
+                
                 doc = {
                     # Unique document ID
-                    'id': f"{metadata['bucket']}/{metadata['key']}/{resource_type}.{resource_name}.{idx}",
+                    'id': doc_id,
                     
                     # State metadata
                     'state_version': state_version,
@@ -54,10 +64,12 @@ class TfStateParser:
                     'provider': provider,
                     'instance_index': idx,
                     
-                    # Source metadata
-                    'source_bucket': metadata['bucket'],
-                    'source_key': metadata['key'],
-                    'source_last_modified': metadata['last_modified'],
+                    # Source metadata (handle both filesystem and S3)
+                    'source_type': metadata.get('source', 'unknown'),
+                    'source_bucket': metadata.get('bucket'),
+                    'source_key': metadata.get('key'),
+                    'source_path': metadata.get('path'),
+                    'source_last_modified': metadata.get('last_modified'),
                     'indexed_at': datetime.utcnow().isoformat(),
                     
                     # Flatten attributes for searchability

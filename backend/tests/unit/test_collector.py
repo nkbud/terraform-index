@@ -24,8 +24,7 @@ class TestS3Collector:
     def collector(self, mock_s3_client):
         """Create S3Collector with mocked client."""
         collector = S3Collector(
-            bucket_name="test-bucket",
-            prefix="terraform/",
+            bucket_names="test-bucket",
             poll_interval=1
         )
         collector.s3_client = mock_s3_client
@@ -111,8 +110,7 @@ class TestS3Collector:
         
         # Verify S3 client calls
         mock_s3_client.list_objects_v2.assert_called_with(
-            Bucket="test-bucket",
-            Prefix="terraform/"
+            Bucket="test-bucket"
         )
         assert mock_s3_client.get_object.call_count == 2
 
