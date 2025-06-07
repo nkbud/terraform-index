@@ -91,46 +91,54 @@ Automatically watches `./tfstates/` directory for `.tfstate` files
 
 ## Configuration
 
-The system has two modes for different environments:
+The system has two main modes with ready-to-use configuration files:
 
-### 🏠 **Local Development** (`.env.local`)
-- Processes files from `./tfstates/` directory
+### 🏠 **Local Development** (Default)
+```bash
+# Uses .env.local configuration
+make demo-local
+```
+- Processes files from `./tfstates/` directory  
 - Uses Localstack for S3 simulation
-- Debug logging enabled
+- Debug logging with emoji indicators
 - Perfect for testing and development
 
-### ☁️ **Production** (`.env.prod`)
+### ☁️ **Production** 
+```bash
+# Uses .env.prod configuration  
+make demo-prod
+```
 - Connects to real AWS S3 buckets
 - Monitors production Kubernetes clusters
 - Structured JSON logging
 - Production-ready configuration
 
-Switch between modes:
+**Quick configuration switch:**
 ```bash
 # Local development
-cp .env.local .env
-make demo-local
+cp .env.local .env && make demo
 
 # Production  
-cp .env.prod .env
-make demo-prod
+cp .env.prod .env && make demo
 ```
 
 ## Connecting Your Real Data
 
+Ready to index your actual infrastructure? Here's how:
+
 ### Step 1: Configure S3 Access
-Edit `.env.prod`:
+Edit `.env.prod` with your S3 buckets:
 ```bash
 # Your S3 buckets (JSON array)
-S3_BUCKETS=["your-terraform-states", "your-backup-bucket"]
+S3_BUCKETS=["your-terraform-states", "your-backup-bucket", "team-tfstates"]
 
 # AWS credentials
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 ```
 
-### Step 2: Configure Kubernetes Access
-Edit `.env.prod`:
+### Step 2: Configure Kubernetes (Optional)
+Add your clusters to `.env.prod`:
 ```bash
 # Enable Kubernetes collection
 KUBERNETES_ENABLED=true
@@ -144,37 +152,62 @@ KUBERNETES_CLUSTERS=[
     "namespaces": ["terraform", "infrastructure"]
   },
   {
-    "name": "staging",
+    "name": "staging", 
     "kubeconfig": "/path/to/staging-kubeconfig",
-    "context": "staging-context", 
+    "context": "staging-context",
     "namespaces": ["default", "terraform"]
   }
 ]
 ```
 
-### Step 3: Start with Your Data
+### Step 3: Launch with Your Data
 ```bash
-# Copy production config
-cp .env.prod .env
-
-# Start the system
+# Deploy with production config
 make demo-prod
 
-# Monitor progress
+# Monitor the indexing process
 make logs
+
+# Check pipeline status
+make status
+
+# Start exploring your infrastructure
+make ui
+```
+
+**🎯 What happens next:**
+1. System scans your S3 buckets for `*.tfstate` files
+2. Connects to your Kubernetes clusters to find Terraform secrets
+3. Parses and indexes all discovered resources
+4. Makes everything searchable at http://localhost:3000
+
+**📊 Monitor progress:**
+```bash
+# Real-time logs with progress indicators
+make logs
+
+# Pipeline statistics 
+make stats
 ```
 
 ## Commands Reference
 
 | Command | Purpose |
 |---------|---------|
-| `make setup` | **Complete setup + demo (recommended first run)** |
-| `make demo-local` | Local development demo |
-| `make demo-prod` | Production demo with real data |
-| `make logs` | View live logs |
-| `make status` | Pipeline status and stats |
-| `make ui` | Open search interface |
-| `make clean` | Reset everything |
+| **`make setup`** | **Complete setup + demo (recommended first run)** |
+| **`make ui`** | **Open search interface (http://localhost:3000)** |
+| **`make status`** | **Show pipeline status and statistics** |
+| `make demo-local` | Local development demo with sample data |
+| `make demo-prod` | Production demo with real AWS/K8s data |
+| `make logs` | View live logs from all components |
+| `make stats` | Show pipeline statistics (JSON) |
+| `make clean` | Reset everything and clean up |
+| `make troubleshoot` | Diagnostic information and health checks |
+
+**Pro tip:** After `make setup`, visit http://localhost:3000 and try searching for:
+- `"aws_instance"` - Find all EC2 instances
+- `"production"` - Find production resources  
+- `"us-east-1"` - Find resources in specific region
 
 ## How It Works
 
@@ -238,40 +271,52 @@ curl -X POST http://localhost:8000/search \
   }'
 ```
 
-## Troubleshooting
+## Quick Troubleshooting
 
-### No documents appearing?
+### 🚨 **Not seeing any data?**
 ```bash
-# Check pipeline status
+# Check if services are running
 make status
 
-# View logs
+# View live logs to see what's happening
 make logs
 
+# Run full diagnostic
+make troubleshoot
+
 # Verify sample data exists
-ls ./tfstates/
+ls -la ./tfstates/
 ```
 
-### Connection errors?
+### 🔌 **Connection issues?**  
 ```bash
-# Check all services are running
-docker compose ps
-
-# Health check
+# Test all services
 make health
 
-# Full troubleshooting
-make troubleshoot
+# Check Docker containers
+docker compose ps
+
+# Restart everything
+make restart
 ```
 
-### Performance issues?
+### 🐌 **Performance issues?**
 ```bash
-# Monitor queue sizes
+# Monitor processing rates and queue sizes
 make stats
 
-# View detailed logs
+# Enable debug logging
 LOG_LEVEL=DEBUG make demo-local
+
+# View detailed component logs
+make logs
 ```
+
+**💡 Pro tips:**
+- Use `make setup` for first-time users - it handles everything automatically
+- The search UI at http://localhost:3000 works immediately with sample data
+- Run `make troubleshoot` for comprehensive diagnostic information
+- Check pipeline stats with `make stats` to see processing rates
 
 ## Development
 
