@@ -13,18 +13,27 @@ The system uses a queue-based architecture with three main stages:
 │   COLLECTORS    │ ─────────────────► │    PARSER    │ ─────────────────► │   UPLOADER     │
 │ • Filesystem    │  (raw tfstate)  │ • TfState    │  (parsed docs)  │ • Elasticsearch│
 │ • S3 (AWS/Local)│                 │   Parser     │                 │   Bulk API     │
+│ • Kubernetes    │                 │              │                 │                │
 └─────────────────┘                 └──────────────┘                 └────────────────┘
                                                                               │
                                                                        ┌──────▼─────────┐
                                                                        │ OpenSearch /   │
-                                                                       │ Elasticsearch  │
-                                                                       └────────────────┘
+                                                                       │ Elasticsearch  │◄──┐
+                                                                       └────────────────┘   │
+                                                                                            │
+                                                                    ┌───────────────────────┐
+                                                                    │   SEARCH UI           │
+                                                                    │ • Exploration         │
+                                                                    │ • Drill-down          │
+                                                                    │ • Multi-key search    │
+                                                                    └───────────────────────┘
 ```
 
 **Key Features:**
 - **Queue-based processing**: Each stage runs independently with queues between them
-- **Multiple sources**: Watches both local filesystem and S3 (real AWS or Localstack)
+- **Multiple sources**: Watches local filesystem, S3 (real AWS or Localstack), and Kubernetes clusters
 - **Local developer experience**: Full local setup with Docker Compose
+- **Advanced search UI**: Custom exploration interface with drill-down capabilities
 - **Configuration-driven**: Switch between local and cloud modes via `.env` files
 
 ## Quick Start
@@ -43,9 +52,45 @@ The system uses a queue-based architecture with three main stages:
    - Files uploaded to Localstack S3 bucket
 
 3. **Explore your infrastructure:**
-   - OpenSearch Dashboards: http://localhost:5601
+   - Custom Search UI: http://localhost:3000
    - Indexer API: http://localhost:8000
    - API docs: http://localhost:8000/docs
+
+## Search UI Features
+
+The terraform-indexer includes a custom-built search interface designed for infrastructure exploration:
+
+### 🔍 **Advanced Search Capabilities**
+- **Full-text search** across all resource attributes
+- **Multi-field search** - search multiple key-value pairs simultaneously
+- **Fuzzy matching** for typos and partial matches
+- **Real-time results** with instant search feedback
+
+### 📊 **Exploration Experience**
+- **Drill-down navigation** - click to find similar resources by type, region, or source
+- **Faceted browsing** - filter by resource types, sources, or terraform versions
+- **Resource relationships** - discover connections between infrastructure components
+- **Interactive result cards** with detailed resource information
+
+### 🔧 **Developer-Friendly Features**
+- **Multi-key search** - find resources matching multiple criteria simultaneously
+- **Source tracking** - see exactly where each resource comes from (S3, filesystem, K8s)
+- **Time-based exploration** - understand when resources were last updated
+- **Responsive design** - works on desktop and mobile devices
+
+### 🎯 **Use Cases**
+```bash
+# Find all production RDS instances
+Search: "RDS production"
+
+# Multi-key search for specific configurations
+Key: "type" Value: "aws_instance"
+Key: "region" Value: "us-east-1"
+
+# Drill down from a security group to find dependent resources
+Click "Similar Type" → See all security groups
+Click "Same Region" → See all resources in that region
+```
 
 ### Option 2: Local Development Setup
 
@@ -76,6 +121,90 @@ For development and testing individual components:
    # Run end-to-end demo
    python scripts/demo.py
    ```
+
+## Kubernetes Collector
+
+The system supports collecting Terraform state files stored as Kubernetes secrets, commonly used with Terraform's Kubernetes backend.
+
+### 🔧 **Configuration**
+
+Add Kubernetes support to your `.env` file:
+
+```bash
+# Enable Kubernetes collector
+KUBERNETES_ENABLED=true
+KUBERNETES_POLL_INTERVAL=60
+KUBERNETES_SECRET_LABEL_SELECTOR=app.terraform.io/component=backend-state
+KUBERNETES_SECRET_NAME_PATTERN=tfstate-
+
+# Define clusters to search (JSON format)
+KUBERNETES_CLUSTERS='[
+  {
+    "name": "production",
+    "kubeconfig": "/path/to/prod-kubeconfig",
+    "context": "prod-context", 
+    "namespaces": ["terraform", "infrastructure"]
+  },
+  {
+    "name": "staging",
+    "kubeconfig": "/path/to/staging-kubeconfig",
+    "context": "staging-context",
+    "namespaces": ["default", "terraform"]
+  }
+]'
+```
+
+### 🎯 **Features**
+- **Multi-cluster support** - search across multiple Kubernetes clusters
+- **Namespace filtering** - specify which namespaces to search in each cluster
+- **Flexible discovery** - finds secrets by labels or name patterns
+- **Multiple context support** - use different kubectl contexts per cluster
+- **Robust error handling** - continues processing if individual clusters are unavailable
+
+### 📝 **Secret Format Support**
+
+The collector looks for Terraform state in these secret keys:
+- `tfstate` (primary)
+- `state` (alternative)
+- `terraform.tfstate` (common format)
+- `default.tfstate` (terraform default)
+
+Example Kubernetes secret:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tfstate-production
+  labels:
+    app.terraform.io/component: backend-state
+  annotations:
+    terraform.workspace: production
+type: Opaque
+data:
+  tfstate: <base64-encoded-terraform-state>
+```
+
+### 🚀 **Demo & Testing**
+
+```bash
+# Test the Kubernetes collector
+python scripts/demo_kubernetes.py
+
+# Create a test secret for local testing
+kubectl create secret generic tfstate-demo \
+  --from-file=tfstate=/path/to/your/terraform.tfstate \
+  --annotation='app.terraform.io/component=backend-state'
+```
+
+### ⚙️ **Cluster Configuration Options**
+
+Each cluster configuration supports:
+- `name`: Unique cluster identifier
+- `kubeconfig`: Path to kubeconfig file (optional - uses default if omitted)
+- `context`: kubectl context name (optional - uses current context if omitted)  
+- `namespaces`: List of namespaces to search (optional - searches all if omitted)
+
+For in-cluster deployments, omit `kubeconfig` and `context` to use pod service account.
 
 ## Features
 
@@ -174,8 +303,7 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 | **Application** | | |
 | `MODE` | `local` | Application mode: `local` or `cloud` |
 | **S3 Configuration** | | |
-| `S3_BUCKET` | `terraform-states` | S3 bucket to poll |
-| `S3_PREFIX` | `""` | S3 key prefix filter |
+| `S3_BUCKETS` | `terraform-states` | S3 buckets to poll (comma-separated) |
 | `S3_POLL_INTERVAL` | `30` | Poll interval in seconds |
 | `S3_ENDPOINT_URL` | `None` | Custom S3 endpoint (for LocalStack) |
 | `AWS_ACCESS_KEY_ID` | `None` | AWS credentials |
@@ -184,21 +312,26 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 | `FILESYSTEM_WATCH_DIRECTORY` | `./tfstates` | Local directory to watch |
 | `FILESYSTEM_POLL_INTERVAL` | `5` | Filesystem poll interval in seconds |
 | `FILESYSTEM_ENABLED` | `true` | Enable filesystem watching |
+| **Kubernetes Configuration** | | |
+| `KUBERNETES_ENABLED` | `false` | Enable Kubernetes secret collection |
+| `KUBERNETES_POLL_INTERVAL` | `60` | Poll interval in seconds |
+| `KUBERNETES_SECRET_LABEL_SELECTOR` | `app.terraform.io/component=backend-state` | Label selector for secrets |
+| `KUBERNETES_SECRET_NAME_PATTERN` | `tfstate-` | Name pattern for secrets |
+| `KUBERNETES_CLUSTERS` | `""` | JSON string of cluster configurations |
 | **Elasticsearch Configuration** | | |
 | `ES_HOSTS` | `http://localhost:9200` | Elasticsearch hosts |
 | `ES_INDEX` | `terraform-resources` | Index name |
 | `ES_BATCH_SIZE` | `100` | Bulk indexing batch size |
 | `ES_BATCH_TIMEOUT` | `10` | Bulk indexing timeout (seconds) |
-| **Queue Configuration** | | |
-| `QUEUE_MAX_SIZE` | `1000` | Maximum queue size |
 
 ## Features
 
 ### Pipeline Architecture
 - ✅ **Queue-based processing**: Independent collector, parser, and uploader stages
-- ✅ **Multiple sources**: Filesystem and S3 (AWS or Localstack) 
+- ✅ **Multiple sources**: Filesystem, S3 (AWS or Localstack), and Kubernetes clusters
 - ✅ **Local development**: Full local setup with sample files
 - ✅ **Configuration-driven**: Switch between local/cloud modes
+- ✅ **Custom Search UI**: Advanced exploration interface with drill-down capabilities
 
 ### Data Processing
 - ✅ **Terraform state parsing**: Extract individual resources from `.tfstate` files
@@ -421,6 +554,7 @@ curl -X POST http://localhost:8000/search \
 | `scripts/run_component.py` | Test individual pipeline components |
 | `scripts/simple_demo.py` | Filesystem-only pipeline demo |
 | `scripts/demo.py` | Full end-to-end pipeline demo |
+| `scripts/demo_kubernetes.py` | Test Kubernetes collector with multiple clusters |
 | `scripts/test_components.py` | Run basic component tests |
 
 ## Extensibility

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terraform Resource Explorer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .search-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 3rem 0;
+        }
+        .resource-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+        }
+        .resource-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .tag-badge {
+            margin: 2px;
+        }
+        .drill-down-btn {
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        .drill-down-btn:hover {
+            opacity: 1;
+        }
+        .multi-search-container {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .search-chip {
+            background-color: #e9ecef;
+            border-radius: 20px;
+            padding: 0.25rem 0.75rem;
+            margin: 0.25rem;
+            display: inline-block;
+            font-size: 0.875rem;
+        }
+        .loading-spinner {
+            display: none;
+        }
+        .loading .loading-spinner {
+            display: inline-block;
+        }
+        .facet-container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .facet-item {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid #eee;
+        }
+        .facet-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- Header -->
+        <div class="search-container">
+            <div class="container">
+                <div class="text-center mb-4">
+                    <h1><i class="fas fa-cube"></i> Terraform Resource Explorer</h1>
+                    <p class="lead">Explore your infrastructure resources with powerful search and drill-down capabilities</p>
+                </div>
+                
+                <!-- Main Search -->
+                <div class="row justify-content-center">
+                    <div class="col-md-8">
+                        <div class="input-group input-group-lg">
+                            <input type="text" id="mainSearch" class="form-control" placeholder="Search resources, attributes, tags...">
+                            <button class="btn btn-light" type="button" id="searchBtn">
+                                <i class="fas fa-search"></i> Search
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Multi-Search -->
+                <div class="row justify-content-center mt-3">
+                    <div class="col-md-8">
+                        <div class="multi-search-container">
+                            <h6><i class="fas fa-layer-group"></i> Multi-Key Search</h6>
+                            <div id="multiSearchContainer">
+                                <div class="multi-search-item row mb-2">
+                                    <div class="col-md-4">
+                                        <input type="text" class="form-control form-control-sm search-key" placeholder="Key (e.g., type, region)">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <input type="text" class="form-control form-control-sm search-value" placeholder="Value">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <button class="btn btn-sm btn-outline-secondary add-search-item">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="btn btn-sm btn-primary" id="multiSearchBtn">
+                                <i class="fas fa-search-plus"></i> Multi Search
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="container-fluid mt-4">
+            <div class="row">
+                <!-- Filters Sidebar -->
+                <div class="col-md-3">
+                    <div class="facet-container">
+                        <h5><i class="fas fa-filter"></i> Filters</h5>
+                        <div id="facetsContainer">
+                            <!-- Facets will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results -->
+                <div class="col-md-9">
+                    <!-- Search Status -->
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <span id="resultsCount">Search for resources...</span>
+                            <div class="loading-spinner spinner-border spinner-border-sm ms-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                        <div id="activeFilters">
+                            <!-- Active filters will be shown here -->
+                        </div>
+                    </div>
+
+                    <!-- Results Container -->
+                    <div id="resultsContainer">
+                        <div class="text-center text-muted py-5">
+                            <i class="fas fa-search fa-3x mb-3"></i>
+                            <h4>Start exploring your infrastructure</h4>
+                            <p>Use the search bar above to find resources, or browse by type using the filters.</p>
+                        </div>
+                    </div>
+
+                    <!-- Pagination -->
+                    <nav id="paginationContainer" style="display: none;">
+                        <ul class="pagination justify-content-center">
+                            <!-- Pagination will be populated here -->
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drill-down Modal -->
+    <div class="modal fade" id="drilldownModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-sitemap"></i> Related Resources</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="drilldownContent">
+                        <!-- Drill-down results will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resource Detail Modal -->
+    <div class="modal fade" id="resourceModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-info-circle"></i> Resource Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="resourceDetails">
+                        <!-- Resource details will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

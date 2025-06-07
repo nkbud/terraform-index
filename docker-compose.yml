@@ -27,16 +27,15 @@ services:
     networks:
       - terraform-net
 
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:2.11.0
-    container_name: terraform-dashboards
+  search-ui:
+    build: ./ui
+    container_name: terraform-search-ui
     ports:
-      - "5601:5601"
-    expose:
-      - "5601"
+      - "3000:3000"
     environment:
-      - 'OPENSEARCH_HOSTS=["http://opensearch:9200"]'
-      - "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true"
+      - ELASTICSEARCH_URL=http://opensearch:9200
+      - ES_INDEX=terraform-resources
+      - PORT=3000
     depends_on:
       - opensearch
     networks:

@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir \
     uvicorn[standard]>=0.20.0 \
     pydantic>=2.0.0 \
     pydantic-settings>=2.0.0 \
-    httpx>=0.24.0
+    httpx>=0.24.0 \
+    kubernetes>=28.0.0
 
 # Copy source code
 COPY src/ ./src/

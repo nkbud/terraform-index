@@ -1,6 +1,7 @@
 """Main application entry point for terraform-indexer."""
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -11,6 +12,7 @@ from pydantic_settings import BaseSettings
 from indexer.collector.s3 import S3Collector
 from indexer.collector.filesystem import FileSystemCollector
 from indexer.collector.composite import CompositeCollector
+from indexer.collector.kubernetes import KubernetesCollector
 from indexer.parser.tfstate import TfStateParser
 from indexer.es import ElasticsearchSink
 from indexer.queue.memory import MemoryQueue
@@ -34,6 +36,13 @@ class Settings(BaseSettings):
     filesystem_watch_directory: str = "./tfstates"
     filesystem_poll_interval: int = 5
     filesystem_enabled: bool = True
+    
+    # Kubernetes Configuration
+    kubernetes_enabled: bool = False
+    kubernetes_poll_interval: int = 60
+    kubernetes_secret_label_selector: str = "app.terraform.io/component=backend-state"
+    kubernetes_secret_name_pattern: str = "tfstate-"
+    kubernetes_clusters: str = ""  # JSON string of cluster configurations
     
     # Elasticsearch Configuration
     es_hosts: str = "http://localhost:9200"
@@ -103,6 +112,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             endpoint_url=settings.s3_endpoint_url,
         )
         collectors.append(s3_collector)
+    
+    # Add Kubernetes collector if enabled
+    if settings.kubernetes_enabled:
+        try:
+            # Parse clusters configuration from JSON string
+            k8s_clusters = []
+            if settings.kubernetes_clusters:
+                k8s_clusters = json.loads(settings.kubernetes_clusters)
+            
+            if k8s_clusters:
+                kubernetes_collector = KubernetesCollector(
+                    clusters=k8s_clusters,
+                    poll_interval=settings.kubernetes_poll_interval,
+                    secret_label_selector=settings.kubernetes_secret_label_selector,
+                    secret_name_pattern=settings.kubernetes_secret_name_pattern,
+                )
+                collectors.append(kubernetes_collector)
+                print(f"Kubernetes collector initialized with {len(k8s_clusters)} clusters")
+            else:
+                print("Kubernetes collector enabled but no clusters configured")
+                
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse Kubernetes clusters configuration: {e}")
+        except Exception as e:
+            print(f"Failed to initialize Kubernetes collector: {e}")
     
     # Create composite collector
     composite_collector = CompositeCollector(collectors)
@@ -176,6 +210,11 @@ async def get_stats():
         "collector": {
             "buckets": settings.s3_buckets,
             "poll_interval": settings.s3_poll_interval,
+        },
+        "kubernetes": {
+            "enabled": settings.kubernetes_enabled,
+            "poll_interval": settings.kubernetes_poll_interval,
+            "clusters": settings.kubernetes_clusters if settings.kubernetes_enabled else None,
         }
     }
     
